@@ -1,5 +1,4 @@
 
-
 #include <algorithm>
 #include <iostream>
 using namespace std;
@@ -48,20 +47,24 @@ simInt v_repsphereR;
 simInt v_repcuboid;
 simInt v_repsensor;
 simInt v_repMass;
-
+int ep;
 cVector3d Fcm, Fcs;
 simFloat* posS;
 simFloat* posH;
 simFloat* velM;
 cVector3d xs;
+cVector3d xs_old;
 //Vm;
 //cVector3d linearVelocity;
 simFloat* lVM;
 simFloat* angularVelocity;
 cVector3d linearVelocity;
 simFloat* lVS;
+simFloat* lVC;
 simFloat* angularVelocityS;
+simFloat* angularVelocityC;
 cVector3d linearVelocityS;
+cVector3d linearVelocityC;
 float Vs;
 float Fs;
 float Fcm_n;
@@ -93,17 +96,19 @@ int pHandle;
 int XS;
 int XM;
 
-
+float B;
 float fOldx;
 float fOldy;
 float fOldz;
 cVector3d xm;
 cVector3d xm_old;
+
 cVector3d applyForce;
 
 void updateHaptics(void);
 void ppArch(cVector3d Vm, cVector3d Vs, cVector3d xm, cVector3d xs);
 void pfArch(cVector3d Vm, cVector3d Vs, cVector3d xm, cVector3d xs, cVector3d FSlave);
+void pfpArch(cVector3d Vm, cVector3d Vs, cVector3d xm, cVector3d xs, cVector3d FSlave);
 
 
 
@@ -120,12 +125,55 @@ float Ms;		// tune
 float Bs;		// tune
 float Ks;		// tune
 
+//GUADAGNI PD SLAVE
+float Ks_array[1] = { Ks };
+float *KsPtr = Ks_array;
+
+
+float Bs_array[1] = { Bs };
+float *BsPtr = Bs_array;
+
+
+float B_array[1] = { B };
+float *BPtr = B_array;
+
+
+float mass;
+
+float mass_array[1] = { mass };
+float *massPtr = mass_array;
+
+// GUADAGNI PD MASTER
+float Km_array[1] = { Km };
+float *KmPtr = Km_array;
+
+float Bm_array[1] = { Bm };
+float *BmPtr = Bm_array;
+
+float FsN;
+
+
+
+
 float Zcm;
 float Zcs;
 
-
+bool button0, button1;
 void updateHaptics(void)
 {
+	//TASTO
+
+
+	button0 = false;
+	button1 = false;
+
+
+
+	hapticDevice->getUserSwitch(0, button0);
+	hapticDevice->getUserSwitch(1, button1);
+
+
+
 	// retrieve position of haptic device
 	hapticDevice->getPosition(xm);
 
@@ -134,11 +182,13 @@ void updateHaptics(void)
 
 
 	// scale the position in such a way we can cover more space in v-rep
-	xm *= 20;
+	xm *= 10;
 	// set reference MASTER sphere position
 	posS[0] = xm(0);
 	posS[1] = xm(1);
 	posS[2] = xm(2);
+	if (posS[2] < 0.05) posS[2] = 0.05;
+
 	simSetObjectPosition(v_repsphereR, -1, posS);
 
 
@@ -146,7 +196,6 @@ void updateHaptics(void)
 
 
 	// get position of slave (Xs)
-	//posH = new simFloat(3);
 	simGetObjectPosition(v_repsphere, -1, posH);
 	xs(0) = posH[0];
 	xs(1) = posH[1];
@@ -159,59 +208,62 @@ void updateHaptics(void)
 	//MASTER VELOCITY
 	linearVelocity = (xm - xm_old) / simGetSimulationTimeStep();
 	xm_old = xm;
-	// print velocity
-	std::cout << "Vm : " << linearVelocity(0) << " " << linearVelocity(1) << " " << linearVelocity(2) << std::endl;
 	float VmNorm = sqrt(pow(linearVelocity(0), 2) + pow(linearVelocity(1), 2) + pow(linearVelocity(2), 2));
-	// low pass filter (threshold is not 0 since force sensor will receive ever a force,even small: e-15
-	//float alpha = 0.05;	// set filter parameter (frequency selector)
-	//
-	//	// filter on vx
-	//	linearVelocity(0) = vmOldx + alpha*(linearVelocity(0) - vmOldx);
-	//	vmOldx = linearVelocity(0);
-	//	// filter on vy
-	//	linearVelocity(1) = vmOldy + alpha*(linearVelocity(1) - vmOldy);
-	//	vmOldy = linearVelocity(1);
-	//	// filter on vz
-	//	linearVelocity(2) = vmOldz + alpha*(linearVelocity(2) - vmOldz);
-	//	vmOldz = linearVelocity(2);
+
+	//filter velocity master
+	float alpha = 0.005;	// set filter parameter (frequency selector)
+
+	// filter on vx
+	linearVelocity(0) = vmOldx + alpha*(linearVelocity(0) - vmOldx);
+	vmOldx = linearVelocity(0);
+	// filter on vy
+	linearVelocity(1) = vmOldy + alpha*(linearVelocity(1) - vmOldy);
+	vmOldy = linearVelocity(1);
+	// filter on vz
+	linearVelocity(2) = vmOldz + alpha*(linearVelocity(2) - vmOldz);
+	vmOldz = linearVelocity(2);
 
 
-
-
-
+	// retrieve cuboid velocity
+    simGetVelocity(v_repcuboid, lVC, angularVelocityC);
+	//std::cout << lVC[0] << endl;
+	linearVelocityC(0) = lVC[0];
+	linearVelocityC(1) = lVC[1];
+	linearVelocityC(2) = lVC[2];
 
 	// linear velocity of slave
 	simGetVelocity(v_repsphere, lVS, angularVelocityS);
+	
+
+
+	///*
 	linearVelocityS(0) = lVS[0];
 	linearVelocityS(1) = lVS[1];
 	linearVelocityS(2) = lVS[2];
-	// print slave velocity
-	std::cout << "Vs: " << linearVelocityS(0) << " " << linearVelocityS(1) << " " << linearVelocityS(2) << std::endl;
-	// compute norm of slave velocity
+	
 	float VsNorm = sqrt(pow(linearVelocityS(0), 2) + pow(linearVelocityS(1), 2) + pow(linearVelocityS(2), 2));
-	 //low pass filter (threshold is not 0 since force sensor will receive ever a force,even small: e-15
-		//// filter on vx
-		//linearVelocityS(0) = vsOldx + alpha*(linearVelocityS(0) - vsOldx);
-		//vsOldx = linearVelocityS(0);
-		//// filter on vy
-		//linearVelocityS(1) = vsOldy + alpha*(linearVelocityS(1) - vsOldy);
-		//vsOldy = linearVelocityS(1);
-		//// filter on vz
-		//linearVelocityS(2) = vsOldz + alpha*(linearVelocityS(2) - vsOldz);
-		//vsOldz = linearVelocityS(2);
 
 
 
+	/// filter slave
+	float beta = 0.5;
+	// filter on vx
+	linearVelocityS(0) = vsOldx + beta*(linearVelocityS(0) - vsOldx);
+	vsOldx = linearVelocityS(0);
+	// filter on vy
+	linearVelocityS(1) = vsOldy + beta*(linearVelocityS(1) - vsOldy);
+	vsOldy = linearVelocityS(1);
+	// filter on vz
+	linearVelocityS(2) = vsOldz + beta*(linearVelocityS(2) - vsOldz);
+	vsOldz = linearVelocityS(2);
 
 
 
-	// force on slave (reaction force)
-	// set force vector applied to haptic
-	// read result of force sensor (Fs)
 	simReadForceSensor(v_repsensor, force, torque);
 	applyForce(0) = 0;
 	applyForce(1) = 0;
 	applyForce(2) = 0;			// z component is affected by gravity, therefore we don't consider it!
+	
 	// compute norm of unfiltered force to compare it with filtered one
 	Fs = sqrt(pow(force[0], 2) + pow(force[1], 2));
 
@@ -225,10 +277,12 @@ void updateHaptics(void)
 		// filter on fy
 		applyForce(1) = fOldy + gamma*(force[1] - fOldy);
 		fOldy = applyForce(1);
+
+		applyForce(2) = 0;
 	}
 	else {
-		applyForce(0) = 0;
-		applyForce(1) = 0;
+		applyForce(0) *= 0.9;
+		applyForce(1) *= 0.9;
 		applyForce(2) = 0;
 		fOldx = 0;
 		fOldy = 0;
@@ -240,17 +294,50 @@ void updateHaptics(void)
 	FF = simSetGraphUserData(fHandle, "FsN", FsN);
 
 
+	// floor reaction force
+	if (xm(2) < 0)
+		applyForce(2) = 7 * xm(2);
+
+
+	// saturate forces
+	if (applyForce(0) > 1.5) 		applyForce(0) = 1.5;
+	if (applyForce(1) > 1.5) 		applyForce(1) = 1.5;
+
+	if (applyForce(0) < -1.5) 	applyForce(0) = -1.5;
+	if (applyForce(1) < -1.5) 	applyForce(1) = -1.5;
+
+	// add the friction term  
+	int B_vrep = simGetFloatSignal("B", BPtr);	// KPs
+	B = BPtr[0];
+	applyForce += B*linearVelocityC;
+	std::cout << B << endl;
 
 
 
-	// NOTE: choosing KD higher we achieve stability with few (almost zero) oscillations. In this way slave "anticipates" master during the motion.
-	//       Instead, with a lower KD we achieve stability with more oscillations but slave doesn't "anticipate" master
+	if (button0 && !button1)
+	{
+		ppArch(linearVelocity, linearVelocityS, xm, xs);
+		//std::cout << "PP CONTROL " << button0 << std::endl;
+		simAddStatusbarMessage("PP CONTROL");
 
-	// P-P
-	ppArch(linearVelocity, linearVelocityS, xm, xs);
+	}
+	else if (button1 && !button0)
+	{
+		pfArch(linearVelocity, linearVelocityS, xm, xs, applyForce);
+		//std::cout << "PF CONTROL " << std::endl;
+		simAddStatusbarMessage("PF CONTROL");
+	}
+	else if (button0 && button1) {
 
-	// P-F
-	//pfArch(linearVelocity, linearVelocityS, xm, xs, applyForce);
+		pfpArch(linearVelocity, linearVelocityS, xm, xs, applyForce);
+		//std::cout << "PFP CONTROL" << std::endl;
+		simAddStatusbarMessage("PFP CONTROL");
+	}
+
+
+    // change online slave mass
+	int mass_vrep = simGetFloatSignal("mass", massPtr);	// KPs
+	mass = massPtr[0];
 
 
 
@@ -260,18 +347,26 @@ void updateHaptics(void)
 
 void ppArch(cVector3d Vm, cVector3d Vs, cVector3d xm, cVector3d xs) {
 
+	
 	Mm = 0;
-	Bm = 0.5;	// KDm
-	Km = 2;		// KPm
 	Ms = 0;
-	Bs = 600;	// KDs
-	Ks = 300;	// KPs
+	
+	int Bs_vrep = simGetFloatSignal("Bs", BsPtr);	// KPs
+	Bs = BsPtr[0];
 
+
+	int Ks_vrep = simGetFloatSignal("Ks", KsPtr);	// KPs
+	Ks = KsPtr[0];
+
+	int Bm_vrep = simGetFloatSignal("Bm", BmPtr);	// KPs
+	Bm = BmPtr[0];
+
+	int Km_vrep = simGetFloatSignal("Km", KmPtr);	// KPs
+	Km = KmPtr[0];
+	
 	Zcm = Mm + Bm + Km;
 	Zcs = Ms + Bs + Ks;
-
-
-
+	
 	// compute control forces basing on previous tuning
 	Fcm(0) = Bm*(Vs(0) - Vm(0)) + Km*(xs(0) - xm(0));
 	Fcm(1) = Bm*(Vs(1) - Vm(1)) + Km*(xs(1) - xm(1));
@@ -282,16 +377,11 @@ void ppArch(cVector3d Vm, cVector3d Vs, cVector3d xm, cVector3d xs) {
 	Fcs(2) = Bs*(Vm(2) - Vs(2)) + Ks*(xm(2) - xs(2));
 
 
-	// print forces
-	std::cout << "Fcm x: " << Fcm(0) << std::endl;
-	std::cout << "Fcm y: " << Fcm(1) << std::endl;
-	std::cout << "Fcm z: " << Fcm(2) << std::endl;
-
 
 	// set control forces
 	fcs[0] = Fcs(0);
 	fcs[1] = Fcs(1);
-	fcs[2] = Fcs(2) + 9.81*66*2.2;
+	fcs[2] = Fcs(2) + 9.81 * mass*2.1;//1300.96;
 	tor[0] = 0;
 	tor[1] = 0;
 	tor[2] = 0;
@@ -300,7 +390,7 @@ void ppArch(cVector3d Vm, cVector3d Vs, cVector3d xm, cVector3d xs) {
 
 	simHandleDynamics(simGetSimulationTimeStep());
 	simAddForceAndTorque(v_repsphere, fcs, tor);
-	hapticDevice->setForce(Fcm);
+	hapticDevice->setForce(Fcm*0.5);
 
 
 	// compare norm of velocities
@@ -312,8 +402,8 @@ void ppArch(cVector3d Vm, cVector3d Vs, cVector3d xm, cVector3d xs) {
 
 
 	// compare norm of position
-	xM = sqrt(pow(xm(0), 2) + pow(xm(1), 2) + pow(xm(2), 2));
-	xS = sqrt(pow(xs(0), 2) + pow(xs(1), 2) + pow(xs(2), 2));
+	xM = sqrt(pow(xm(0), 2) + pow(xm(1), 2));
+	xS = sqrt(pow(xs(0), 2) + pow(xs(1), 2));
 	pHandle = simGetObjectHandle("graP");
 	XS = simSetGraphUserData(pHandle, "XS", xS);
 	XM = simSetGraphUserData(pHandle, "XM", xM);
@@ -326,20 +416,30 @@ void ppArch(cVector3d Vm, cVector3d Vs, cVector3d xm, cVector3d xs) {
 
 void pfArch(cVector3d Vm, cVector3d Vs, cVector3d xm, cVector3d xs, cVector3d FSlave) {
 
-	// I keep blue ball fixed to better visualize vrep scene. Position of haptic is still sent to slave!!!
-	posS[0] = 0;
-	posS[1] = 0;
-	posS[2] = 0;
-	simSetObjectPosition(v_repsphereR, -1, posS);
-
 
 
 	Mm = 0;
 	Bm = 0;	// KDm; check if tuning Bm = 0 or 0.5 system is stable or not
 	Km = 0;		// KPm
 	Ms = 0;
-	Bs = 600;	// KDs
-	Ks = 300;	// KPs
+	
+
+	int Bs_vrep = simGetFloatSignal("Bs", BsPtr);	// KPs
+	Bs = BsPtr[0];
+
+	int Ks_vrep = simGetFloatSignal("Ks", KsPtr);	// KPs
+	Ks = KsPtr[0];
+
+
+	int Bm_vrep = simGetFloatSignal("Bm", BmPtr);	// Bm
+	Bm = BmPtr[0];
+
+	int Km_vrep = simGetFloatSignal("Km", KmPtr);	// Km
+	Km = KmPtr[0];
+
+	
+
+
 
 	Zcm = Mm + Bm + Km;
 	Zcs = Ms + Bs + Ks;
@@ -352,16 +452,11 @@ void pfArch(cVector3d Vm, cVector3d Vs, cVector3d xm, cVector3d xs, cVector3d FS
 
 
 
-	// print forces
-	std::cout << "Fcm x: " << Fcm(0) << std::endl;
-	std::cout << "Fcm y: " << Fcm(1) << std::endl;
-	std::cout << "Fcm z: " << Fcm(2) << std::endl;
-
 
 	// set control forces
 	fcs[0] = Fcs(0);
 	fcs[1] = Fcs(1);
-	fcs[2] = Fcs(2) + 9.81*66*2.2;
+	fcs[2] = Fcs(2) + 9.81 * mass * 2.1;
 	tor[0] = 0;
 	tor[1] = 0;
 	tor[2] = 0;
@@ -369,7 +464,7 @@ void pfArch(cVector3d Vm, cVector3d Vs, cVector3d xm, cVector3d xs, cVector3d FS
 
 	simHandleDynamics(simGetSimulationTimeStep());
 	simAddForceAndTorque(v_repsphere, fcs, tor);
-	hapticDevice->setForce(Fcm);
+	hapticDevice->setForce(Fcm / 2);
 
 
 	// compare norm of velocities
@@ -381,15 +476,82 @@ void pfArch(cVector3d Vm, cVector3d Vs, cVector3d xm, cVector3d xs, cVector3d FS
 
 
 	// compare norm of position
-	xM = sqrt(pow(xm(0), 2) + pow(xm(1), 2) + pow(xm(2), 2));
-	xS = sqrt(pow(xs(0), 2) + pow(xs(1), 2) + pow(xs(2), 2));
+	xM = sqrt(pow(xm(0), 2) + pow(xm(1), 2));
+	xS = sqrt(pow(xs(0), 2) + pow(xs(1), 2));
 	pHandle = simGetObjectHandle("graP");
 	XS = simSetGraphUserData(pHandle, "XS", xS);
 	XM = simSetGraphUserData(pHandle, "XM", xM);
+	ep = simSetGraphUserData(pHandle, "ep", xM - xS);
+
+
+}
+void pfpArch(cVector3d Vm, cVector3d Vs, cVector3d xm, cVector3d xs, cVector3d FSlave) {
+
+	
+
+	Mm = 0;
+	Ms = 0;
+
+	int Bs_vrep = simGetFloatSignal("Bs", BsPtr);	// KPs
+	Bs = BsPtr[0];
+
+	int Ks_vrep = simGetFloatSignal("Ks", KsPtr);	// KPs
+	Ks = KsPtr[0];
+
+	int Bm_vrep = simGetFloatSignal("Bm", BmPtr);	// Bm
+	Bm = BmPtr[0];
+
+	int Km_vrep = simGetFloatSignal("Km", KmPtr);	// Km
+	Km = KmPtr[0];
+
+	
+
+	Zcm = Mm + Bm + Km;
+	Zcs = Ms + Bs + Ks;
+
+	
+
+
+	// compute control forces basing on previous tuning
+	Fcm = -FSlave + Bm*(Vs - Vm) + Km*(xs - xm);
+	Fcs = Bs*(Vm - Vs) + Ks*(xm - xs);
+
+
+
+	// set control forces
+	fcs[0] = Fcs(0);
+	fcs[1] = Fcs(1);
+	fcs[2] = Fcs(2) + 9.81 * mass * 2.1;
+	tor[0] = 0;
+	tor[1] = 0;
+	tor[2] = 0;
+
+
+	simHandleDynamics(simGetSimulationTimeStep());
+	simAddForceAndTorque(v_repsphere, fcs, tor);
+	hapticDevice->setForce(Fcm / 2);
+
+
+	// compare norm of velocities
+	vm = sqrt(pow(Vm(0), 2) + pow(Vm(1), 2) + pow(Vm(2), 2));
+	vs = sqrt(pow(Vs(0), 2) + pow(Vs(1), 2) + pow(Vs(2), 2));
+	vHandle = simGetObjectHandle("graV");
+	VS = simSetGraphUserData(vHandle, "VS", vs);
+	VM = simSetGraphUserData(vHandle, "VM", vm);
+
+
+	// compare norm of position
+	xM = sqrt(pow(xm(0), 2) + pow(xm(1), 2));
+	xS = sqrt(pow(xs(0), 2) + pow(xs(1), 2));
+	pHandle = simGetObjectHandle("graP");
+	XS = simSetGraphUserData(pHandle, "XS", xS);
+	XM = simSetGraphUserData(pHandle, "XM", xM);
+	ep = simSetGraphUserData(pHandle, "ep", xM - xS);
 
 
 
 }
+
 //---------------------------------------------------------------------------
 //
 //  LUA interface
@@ -408,16 +570,18 @@ LIBRARY vrepLib; // the V-REP library that we will dynamically load and bind
 // definitions for LUA_START_COMMAND
 #define LUA_START_COMMAND "simExtCHAI3D_start"
 const int inArgs_START[] = {
-    3,
-    sim_lua_arg_int,   0,
-    sim_lua_arg_float, 0,
-    sim_lua_arg_float, 0,
+	3,
+	sim_lua_arg_int, 0,
+	sim_lua_arg_float, 0,
+	sim_lua_arg_float, 0,
 };
 
 
 
 void LUA_START_CALLBACK(SLuaCallBack* p)
 {
+
+	button0 = false;
 
 	// create a haptic device handler
 	handler = new cHapticDeviceHandler();
@@ -451,12 +615,17 @@ void LUA_START_CALLBACK(SLuaCallBack* p)
 	xm_old(1) = 0;
 	xm_old(2) = 0;
 
+	xs_old(0) = 0;
+	xs_old(1) = 0;
+	xs_old(2) = 0;
+
 
 	tor = new simFloat(3);
 	fcs = new simFloat(3);
 	posH = new simFloat(3);
 	posS = new simFloat(3);
 	lVS = new simFloat(3);
+	lVC = new simFloat(3);
 	lVM = new simFloat(3);
 	angularVelocity = new simFloat(3);
 	angularVelocityS = new simFloat(3);
@@ -478,7 +647,7 @@ void LUA_START_CALLBACK(SLuaCallBack* p)
 // definitions for LUA_RESET_COMMAND
 #define LUA_RESET_COMMAND "simExtCHAI3D_reset"
 const int inArgs_RESET[] = {
-    0
+	0
 };
 
 
@@ -497,8 +666,8 @@ void LUA_RESET_CALLBACK(SLuaCallBack* p)
 // definitions for LUA_READ_POSITION_COMMAND
 #define LUA_READ_POSITION_COMMAND "simExtCHAI3D_readPosition"
 const int inArgs_READ_POSITION[] = {
-    1,
-    sim_lua_arg_int, 0
+	1,
+	sim_lua_arg_int, 0
 };
 
 
@@ -516,62 +685,62 @@ void LUA_READ_POSITION_CALLBACK(SLuaCallBack* p)
 
 ///  \brief V-REP shared library initialization.
 
-VREP_DLLEXPORT unsigned char v_repStart(void* reservedPointer,int reservedInt)
+VREP_DLLEXPORT unsigned char v_repStart(void* reservedPointer, int reservedInt)
 {
 
 
-  char curDirAndFile[1024];
+	char curDirAndFile[1024];
 #ifdef _WIN32
-  GetModuleFileName(NULL,curDirAndFile,1023);
-  PathRemoveFileSpec(curDirAndFile);
+	GetModuleFileName(NULL, curDirAndFile, 1023);
+	PathRemoveFileSpec(curDirAndFile);
 #elif defined (__linux) || defined (__APPLE__)
-  if (getcwd(curDirAndFile, sizeof(curDirAndFile)) == NULL) strcpy(curDirAndFile, "");
+	if (getcwd(curDirAndFile, sizeof(curDirAndFile)) == NULL) strcpy(curDirAndFile, "");
 #endif
-  std::string currentDirAndPath(curDirAndFile);
-  std::string temp(currentDirAndPath);
+	std::string currentDirAndPath(curDirAndFile);
+	std::string temp(currentDirAndPath);
 #ifdef _WIN32
-  temp+="\\v_rep.dll";
+	temp += "\\v_rep.dll";
 #elif defined (__linux)
-  temp+="/libv_rep.so";
+	temp += "/libv_rep.so";
 #elif defined (__APPLE__)
-  temp+="/libv_rep.dylib";
+	temp += "/libv_rep.dylib";
 #endif
-  vrepLib=loadVrepLibrary(temp.c_str());
-  if (vrepLib==NULL)
-  {
-    std::cout << "Error, could not find or correctly load the V-REP library. Cannot start 'CHAI3D' plugin.\n";
-    return(0);
-  }
-  if (getVrepProcAddresses(vrepLib)==0)
-  {
-    std::cout << "Error, could not find all required functions in the V-REP library. Cannot start 'CHAI3D' plugin.\n";
-    unloadVrepLibrary(vrepLib);
-    return(0);
-  }
+	vrepLib = loadVrepLibrary(temp.c_str());
+	if (vrepLib == NULL)
+	{
+		std::cout << "Error, could not find or correctly load the V-REP library. Cannot start 'CHAI3D' plugin.\n";
+		return(0);
+	}
+	if (getVrepProcAddresses(vrepLib) == 0)
+	{
+		std::cout << "Error, could not find all required functions in the V-REP library. Cannot start 'CHAI3D' plugin.\n";
+		unloadVrepLibrary(vrepLib);
+		return(0);
+	}
 
-  int vrepVer;
-  simGetIntegerParameter(sim_intparam_program_version,&vrepVer);
-  if (vrepVer<30103)
-  {
-    std::cout << "Sorry, your V-REP copy is somewhat old. Cannot start 'CHAI3D' plugin.\n";
-    unloadVrepLibrary(vrepLib);
-    return(0);
-  }
+	int vrepVer;
+	simGetIntegerParameter(sim_intparam_program_version, &vrepVer);
+	if (vrepVer<30103)
+	{
+		std::cout << "Sorry, your V-REP copy is somewhat old. Cannot start 'CHAI3D' plugin.\n";
+		unloadVrepLibrary(vrepLib);
+		return(0);
+	}
 
-  // register LUA commands
+	// register LUA commands
 
-  std::vector<int> inArgs;
+	std::vector<int> inArgs;
 
-  CLuaFunctionData::getInputDataForFunctionRegistration(inArgs_START,inArgs);
-  simRegisterCustomLuaFunction(LUA_START_COMMAND,strConCat("number result=",LUA_START_COMMAND,"(number deviceIndex,number toolRadius,number workspaceRadius)"),&inArgs[0],LUA_START_CALLBACK);
+	CLuaFunctionData::getInputDataForFunctionRegistration(inArgs_START, inArgs);
+	simRegisterCustomLuaFunction(LUA_START_COMMAND, strConCat("number result=", LUA_START_COMMAND, "(number deviceIndex,number toolRadius,number workspaceRadius)"), &inArgs[0], LUA_START_CALLBACK);
 
-  CLuaFunctionData::getInputDataForFunctionRegistration(inArgs_RESET,inArgs);
-  simRegisterCustomLuaFunction(LUA_RESET_COMMAND,strConCat("",LUA_RESET_COMMAND,"()"),&inArgs[0],LUA_RESET_CALLBACK);
+	CLuaFunctionData::getInputDataForFunctionRegistration(inArgs_RESET, inArgs);
+	simRegisterCustomLuaFunction(LUA_RESET_COMMAND, strConCat("", LUA_RESET_COMMAND, "()"), &inArgs[0], LUA_RESET_CALLBACK);
 
-  CLuaFunctionData::getInputDataForFunctionRegistration(inArgs_READ_POSITION,inArgs);
-  simRegisterCustomLuaFunction(LUA_READ_POSITION_COMMAND,strConCat("table_3 position=",LUA_READ_POSITION_COMMAND,"(number deviceIndex)"),&inArgs[0],LUA_READ_POSITION_CALLBACK);
+	CLuaFunctionData::getInputDataForFunctionRegistration(inArgs_READ_POSITION, inArgs);
+	simRegisterCustomLuaFunction(LUA_READ_POSITION_COMMAND, strConCat("table_3 position=", LUA_READ_POSITION_COMMAND, "(number deviceIndex)"), &inArgs[0], LUA_READ_POSITION_CALLBACK);
 
-  return PLUGIN_VERSION;
+	return PLUGIN_VERSION;
 }
 
 
@@ -580,32 +749,32 @@ VREP_DLLEXPORT unsigned char v_repStart(void* reservedPointer,int reservedInt)
 
 VREP_DLLEXPORT void v_repEnd()
 {
-  // stop haptic thread and cleanup
+	// stop haptic thread and cleanup
 
-  unloadVrepLibrary(vrepLib);
+	unloadVrepLibrary(vrepLib);
 }
 
 
 
 ///  \brief V-REP shared library message processing callback.
 
-VREP_DLLEXPORT void* v_repMessage(int message,int* auxiliaryData,void* customData,int* replyData)
+VREP_DLLEXPORT void* v_repMessage(int message, int* auxiliaryData, void* customData, int* replyData)
 {
-  int   errorModeSaved;
-  void *retVal = NULL;
+	int   errorModeSaved;
+	void *retVal = NULL;
 
 
-  cVector3d applyForce = { 0,0,0 };
-  if (message == sim_message_eventcallback_simulationended)
-  { // simulation ended. Destroy all BubbleRob instances:
-	//allBubbleRobs.clear();
-	  hapticDevice->setForce(applyForce);
+	cVector3d applyForce = { 0, 0, 0 };
+	if (message == sim_message_eventcallback_simulationended)
+	{ // simulation ended. Destroy all BubbleRob instances:
+		//allBubbleRobs.clear();
+		hapticDevice->setForce(applyForce);
 
-  }
+	}
 
-  simGetIntegerParameter(sim_intparam_error_report_mode, &errorModeSaved);
-  simSetIntegerParameter(sim_intparam_error_report_mode, sim_api_errormessage_ignore);
-  simSetIntegerParameter(sim_intparam_error_report_mode, errorModeSaved);
+	simGetIntegerParameter(sim_intparam_error_report_mode, &errorModeSaved);
+	simSetIntegerParameter(sim_intparam_error_report_mode, sim_api_errormessage_ignore);
+	simSetIntegerParameter(sim_intparam_error_report_mode, errorModeSaved);
 
-  return retVal;
+	return retVal;
 }
